@@ -3,6 +3,8 @@ using AuctionService.DTOs;
 using AuctionService.Entities;
 using AutoMapper;
 using AutoMapper.QueryableExtensions;
+using Contracts;
+using MassTransit;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -15,10 +17,14 @@ public class AuctionsController : ControllerBase
 {
     private readonly AuctionDbContext _context;
     private readonly IMapper _mapper;
+    private readonly IPublishEndpoint _publishEndpoint;
 
-    public AuctionsController(AuctionDbContext context, IMapper mapper){
+    public AuctionsController(AuctionDbContext context, IMapper mapper, 
+        IPublishEndpoint publishEndpoint){
+
         _context = context;
         _mapper = mapper;
+        _publishEndpoint = publishEndpoint;
     }
 
 // http://localhost:7001/api/auctions
@@ -63,12 +69,16 @@ public class AuctionsController : ControllerBase
 
         _context.Auctions.Add(auction);
 
+        var newAuction = _mapper.Map<AuctionDto>(auction);
+
+        await _publishEndpoint.Publish(_mapper.Map<AuctionCreated>(newAuction));
+
         var result = await _context.SaveChangesAsync() > 0;
 
         if(!result) return BadRequest("Could not save auction");
 
         return CreatedAtAction(nameof(GetAuctionById), 
-            new {auction.Id}, _mapper.Map<AuctionDto>(auction));
+            new {auction.Id}, newAuction);
     }
 
     //http://localhost:7001/api/auctions/?id=1
@@ -89,6 +99,10 @@ public class AuctionsController : ControllerBase
         auction.Item.Mileage = auctionDto.Mileage ?? auction.Item.Mileage;
         auction.Item.Year = auctionDto.Year ?? auction.Item.Year;
 
+
+        await _publishEndpoint.Publish(_mapper.Map<AuctionUpdated>(auction));
+
+
         var result = await _context.SaveChangesAsync() > 0;
 
         if (result) return Ok();
@@ -107,6 +121,9 @@ public class AuctionsController : ControllerBase
         // TODO: check seller username
 
         _context.Remove(auction);
+
+        await _publishEndpoint.Publish<AuctionDeleted>(new {Id = auction.Id.ToString()});
+        
         var result = await _context.SaveChangesAsync() > 0;
 
         if (result) return Ok();
